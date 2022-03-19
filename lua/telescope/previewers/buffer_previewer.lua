@@ -269,6 +269,140 @@ previewers.file_maker = function(filepath, bufnr, opts)
   end
 end
 
+previewers.custom_buffer_previewer = function(opts)
+  opts = opts or {}
+
+  assert(opts.define_preview, "define_preview is a required function")
+  assert(not opts.preview_fn, "preview_fn not allowed")
+
+  local opt_setup = opts.setup
+  local opt_teardown = opts.teardown
+
+  local old_bufs = {}
+  local bufname_table = {}
+
+  local global_state = require "telescope.state"
+  local preview_window_id
+
+  local function get_bufnr(self)
+    if not self.state then
+      return nil
+    end
+    return self.state.bufnr
+  end
+
+  local function set_bufnr(self, value)
+    if self.state then
+      self.state.bufnr = value
+      table.insert(old_bufs, value)
+    end
+  end
+
+  local function get_bufnr_by_bufname(self, value)
+    if not self.state then
+      return nil
+    end
+    return bufname_table[value]
+  end
+
+  local function set_bufname(self, value)
+    if self.state then
+      self.state.bufname = value
+      if value then
+        bufname_table[value] = get_bufnr(self)
+      end
+    end
+  end
+
+  function opts.setup(self)
+    local state = {}
+    if opt_setup then
+      vim.tbl_deep_extend("force", state, opt_setup(self))
+    end
+    return state
+  end
+
+  function opts.teardown(self)
+    if opt_teardown then
+      opt_teardown(self)
+    end
+
+    local last_nr
+    if opts.keep_last_buf then
+      last_nr = global_state.get_global_key "last_preview_bufnr"
+      -- Push in another buffer so the last one will not be cleaned up
+      if preview_window_id then
+        local bufnr = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_win_set_buf(preview_window_id, bufnr)
+      end
+    end
+
+    set_bufnr(self, nil)
+    set_bufname(self, nil)
+
+    for _, bufnr in ipairs(old_bufs) do
+      if bufnr ~= last_nr then
+        buf_delete(bufnr)
+      end
+    end
+    -- enable resuming picker with existing previewer to avoid lookup of deleted bufs
+    bufname_table = {}
+  end
+
+  function opts.preview_fn(self, entry, status)
+    vim.api.nvim_win_set_buf(status.preview_win, entry.value.number)
+    --[[ if get_bufnr(self) == nil then
+      set_bufnr(self, vim.api.nvim_win_get_buf(status.preview_win))
+      preview_window_id = status.preview_win
+    end ]]
+
+    --[[ if opts.get_buffer_by_name and get_bufnr_by_bufname(self, opts.get_buffer_by_name(self, entry)) then
+      self.state.bufname = opts.get_buffer_by_name(self, entry)
+      self.state.bufnr = get_bufnr_by_bufname(self, self.state.bufname)
+      vim.api.nvim_win_set_buf(status.preview_win, self.state.bufnr)
+    else
+      local bufnr = vim.api.nvim_create_buf(false, true)
+      set_bufnr(self, bufnr)
+
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.api.nvim_win_set_buf(status.preview_win, bufnr)
+        end
+      end)
+
+      vim.api.nvim_win_set_option(status.preview_win, "winhl", "Normal:TelescopePreviewNormal")
+      vim.api.nvim_win_set_option(status.preview_win, "signcolumn", "no")
+      vim.api.nvim_win_set_option(status.preview_win, "foldlevel", 100)
+      vim.api.nvim_win_set_option(status.preview_win, "wrap", false)
+      vim.api.nvim_win_set_option(status.preview_win, "scrollbind", false)
+
+      self.state.winid = status.preview_win
+      self.state.bufname = nil
+    end ]]
+
+    if opts.keep_last_buf then
+      global_state.set_global_key("last_preview_bufnr", self.state.bufnr)
+    end
+
+    opts.define_preview(self, entry, status)
+
+    putils.with_preview_window(status, nil, function()
+      vim.cmd "do User TelescopePreviewerLoaded"
+    end)
+
+    if opts.get_buffer_by_name then
+      set_bufname(self, opts.get_buffer_by_name(self, entry))
+    end
+  end
+
+  if not opts.scroll_fn then
+    opts.scroll_fn = scroll_fn
+  end
+
+  return Previewer:new(opts)
+end
+
+
 previewers.new_buffer_previewer = function(opts)
   opts = opts or {}
 
